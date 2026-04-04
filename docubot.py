@@ -9,6 +9,13 @@ Core DocuBot class responsible for:
 
 import os
 import glob
+import re
+
+# Minimum relevance score required to return a snippet.
+# Snippets with a score at or below this threshold are treated as
+# "no useful context found" and trigger the guardrail refusal.
+MIN_SCORE_THRESHOLD = 0
+
 
 class DocuBot:
     def __init__(self, docs_folder="docs", llm_client=None):
@@ -19,11 +26,15 @@ class DocuBot:
         self.docs_folder = docs_folder
         self.llm_client = llm_client
 
-        # Load documents into memory
-        self.documents = self.load_documents()  # List of (filename, text)
+        # Load documents into memory as (filename, text) pairs.
+        self.documents = self.load_documents()
 
-        # Build a retrieval index (implemented in Phase 1)
-        self.index = self.build_index(self.documents)
+        # Explode each document into paragraph-level chunks for more
+        # precise retrieval. Each chunk is (filename, paragraph_text).
+        self.chunks = self._chunk_documents(self.documents)
+
+        # Build a retrieval index over the chunks.
+        self.index = self.build_index(self.chunks)
 
     # -----------------------------------------------------------
     # Document Loading
@@ -45,54 +56,108 @@ class DocuBot:
         return docs
 
     # -----------------------------------------------------------
+    # Paragraph Chunking (Part 3 improvement)
+    # -----------------------------------------------------------
+
+    def _chunk_documents(self, documents):
+        """
+        Splits each document into paragraph-level chunks.
+
+        A paragraph is any block of text separated by one or more blank
+        lines. Short paragraphs (fewer than 20 characters) are skipped
+        because they rarely carry enough information on their own.
+
+        Returns a flat list of (filename, paragraph_text) tuples.
+        """
+        chunks = []
+        for filename, text in documents:
+            # Split on one or more blank lines.
+            paragraphs = re.split(r"\n\s*\n", text)
+            for para in paragraphs:
+                para = para.strip()
+                if len(para) >= 20:
+                    chunks.append((filename, para))
+        return chunks
+
+    # -----------------------------------------------------------
     # Index Construction (Phase 1)
     # -----------------------------------------------------------
 
     def build_index(self, documents):
         """
-        TODO (Phase 1):
-        Build a tiny inverted index mapping lowercase words to the documents
-        they appear in.
+        Builds a tiny inverted index mapping lowercase words to the
+        (filename, text) chunks they appear in.
 
-        Example structure:
+        Structure:
         {
-            "token": ["AUTH.md", "API_REFERENCE.md"],
-            "database": ["DATABASE.md"]
+            "token": [(filename, text), ...],
+            "database": [(filename, text), ...]
         }
 
-        Keep this simple: split on whitespace, lowercase tokens,
-        ignore punctuation if needed.
+        Tokenisation: split on non-alphanumeric characters, lowercase,
+        drop empty strings.
         """
         index = {}
-        # TODO: implement simple indexing
+        for filename, text in documents:
+            words = set(re.split(r"\W+", text.lower()))
+            for word in words:
+                if not word:
+                    continue
+                if word not in index:
+                    index[word] = []
+                index[word].append((filename, text))
         return index
 
     # -----------------------------------------------------------
     # Scoring and Retrieval (Phase 1)
     # -----------------------------------------------------------
-
     def score_document(self, query, text):
-        """
-        TODO (Phase 1):
-        Return a simple relevance score for how well the text matches the query.
-
-        Suggested baseline:
-        - Convert query into lowercase words
-        - Count how many appear in the text
-        - Return the count as the score
-        """
-        # TODO: implement scoring
-        return 0
+        STOP_WORDS = {
+            "a", "an", "the", "is", "are", "was", "were", "to", "of", "in",
+            "for", "on", "with", "at", "by", "from", "do", "how", "what",
+            "where", "which", "there", "any", "all", "this", "that", "these",
+            "those", "it", "its", "be", "has", "have", "does", "i", "if",
+            "or", "and", "not", "my", "your", "can", "me"
+        }
+        query_words = re.split(r"\W+", query.lower())
+        query_words = [w for w in query_words if w and w not in STOP_WORDS]
+        text_lower = text.lower()
+        score = sum(text_lower.count(word) for word in query_words)
+        return score
 
     def retrieve(self, query, top_k=3):
         """
-        TODO (Phase 1):
-        Use the index and scoring function to select top_k relevant document snippets.
+        Uses the index to find candidate chunks, scores each one, and
+        returns the top_k results sorted by score descending.
 
-        Return a list of (filename, text) sorted by score descending.
+        Returns a list of (filename, text) tuples.
+        Chunks whose score is at or below MIN_SCORE_THRESHOLD are
+        excluded (guardrail: avoids surfacing irrelevant noise).
         """
-        results = []
-        # TODO: implement retrieval logic
+        # Use the inverted index to collect candidate chunks quickly.
+        query_words = set(re.split(r"\W+", query.lower()))
+        query_words.discard("")
+
+        candidate_set = {}  # (filename, text) -> (filename, text)
+        for word in query_words:
+            for chunk in self.index.get(word, []):
+                filename, text = chunk
+                candidate_set[(filename, text)] = chunk
+
+        if not candidate_set:
+            return []
+
+        # Score each candidate.
+        scored = []
+        for chunk in candidate_set.values():
+            filename, text = chunk
+            score = self.score_document(query, text)
+            if score > MIN_SCORE_THRESHOLD:
+                scored.append((score, filename, text))
+
+        # Sort by score descending, then return top_k.
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [(fname, text) for _, fname, text in scored]
         return results[:top_k]
 
     # -----------------------------------------------------------
@@ -140,6 +205,6 @@ class DocuBot:
     def full_corpus_text(self):
         """
         Returns all documents concatenated into a single string.
-        This is used in Phase 0 for naive 'generation only' baselines.
+        Used in Phase 0 for naive 'generation only' baselines.
         """
         return "\n\n".join(text for _, text in self.documents)
