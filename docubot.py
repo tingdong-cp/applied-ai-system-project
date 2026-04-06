@@ -10,7 +10,9 @@ Core DocuBot class responsible for:
 import os
 import glob
 import re
-
+import logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 # Minimum relevance score required to return a snippet.
 # Snippets with a score at or below this threshold are treated as
 # "no useful context found" and trigger the guardrail refusal.
@@ -41,6 +43,7 @@ class DocuBot:
     # -----------------------------------------------------------
 
     def load_documents(self):
+
         """
         Loads all .md and .txt files inside docs_folder.
         Returns a list of tuples: (filename, text)
@@ -53,6 +56,8 @@ class DocuBot:
                     text = f.read()
                 filename = os.path.basename(path)
                 docs.append((filename, text))
+        logger.info(f"Loaded {len(docs)} document(s) from {self.docs_folder}")
+
         return docs
 
     # -----------------------------------------------------------
@@ -126,6 +131,7 @@ class DocuBot:
         return score
 
     def retrieve(self, query, top_k=3):
+
         """
         Uses the index to find candidate chunks, scores each one, and
         returns the top_k results sorted by score descending.
@@ -158,6 +164,8 @@ class DocuBot:
         # Sort by score descending, then return top_k.
         scored.sort(key=lambda x: x[0], reverse=True)
         results = [(fname, text) for _, fname, text in scored]
+
+        logger.info(f"Query: '{query}' -> {len(results)} result(s) retrieved")
         return results[:top_k]
 
     # -----------------------------------------------------------
@@ -195,6 +203,7 @@ class DocuBot:
 
         if not snippets:
             return "I do not know based on these docs."
+        logger.info(f"RAG answer generated for query: '{query}'")
 
         return self.llm_client.answer_from_snippets(query, snippets)
 
