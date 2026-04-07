@@ -12,8 +12,7 @@ DocuBot answers developer questions about a codebase by retrieving relevant docu
 ---
 
 ## Demo Walkthrough
-
-🎥 Loom video: [ADD LINK HERE AFTER RECORDING]
+https://drive.google.com/file/d/121CsJLBSxFFgrcQTQwZWDS-LS67YLOWJ/view?usp=sharing
 
 ### Sample Interactions
 
